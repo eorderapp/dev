@@ -22,9 +22,8 @@ build:
 	@echo "all DONE"
 
 get:
-	$(GOGET) github.com/gorilla/mux
-	$(GOGET) github.com/go-sql-driver/mysql
-	$(GOGET) github.com/denisenkom/go-mssqldb
+	$(GOGET) github.com/gin-gonic/gin
+	$(GOGET) github.com/appleboy/gin-jwt
 
 
 

@@ -1,84 +1,86 @@
 package main
-//docker run --name sqlserver -d mssql-articles
-//docker inspect
-
-//docker run -it --link sqlserver --rm mssql-articles  /opt/mssql-tools/bin/sqlcmd -S 172.17.0.2 -U sa -P "puieMonta140!"
-
 
 import (
+	"github.com/gin-gonic/gin"
+	"github.com/appleboy/gin-jwt"
 	"net/http"
-	"log"
-	"context"
-	"github.com/gorilla/mux"
-	"fmt"
-	"database/sql"
-)
-import (
-	_ "github.com/denisenkom/go-mssqldb"
-	"net/url"
+	"time"
 )
 
-var db *sql.DB = nil
-
-
-func ArticlesCategoryHandler(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	w.WriteHeader(http.StatusOK)
-	article := getArticleById(vars["category"])
-	fmt.Println("Article get", article)
-	fmt.Fprintf(w, "Category: %v\n", article)
-}
+//http://blog.theodo.fr/2016/11/securize-a-koa-api-with-a-jwt-token/
 
 func main() {
-	db = initSqlConnection()
-	r := mux.NewRouter()
-	r.HandleFunc("/articles/{category}/", ArticlesCategoryHandler)
-	log.Fatal(http.ListenAndServe(":8000", r))
+	router := gin.Default()
+	auth := setAuthHandler(router)
+	addHandlers(auth)
+	http.ListenAndServe(":8080", router)
 }
 
-func initSqlConnection() *sql.DB {
-	query := url.Values{}
-	query.Add("database", fmt.Sprintf("%s", "TEST"))
 
-	u := &url.URL{
-		Scheme:   "sqlserver",
-		User:     url.UserPassword("sa", "puieMonta140!"),
-		Host:     fmt.Sprintf("%s:%d", "172.17.0.2", 1433),
-		// Path:  instance, // if connecting to an instance instead of a port
-		RawQuery: query.Encode(),
-	}
-	connectionString := u.String()
-	fmt.Println(connectionString)
-	db, err := sql.Open("mssql", connectionString)
-	if err!= nil {
-		log.Fatal(err)
+
+
+func setAuthHandler(router *gin.Engine) *gin.RouterGroup {
+	authMiddleware := &jwt.GinJWTMiddleware{
+		Realm:      "test zone",
+		Key:        []byte("secret key"),
+		Timeout:    time.Hour,
+		MaxRefresh: time.Hour,
+		Authenticator: func(userId string, password string, c *gin.Context) (string, bool) {
+			if (userId == "admin" && password == "admin") || (userId == "test" && password == "test") {
+				return userId, true
+			}
+
+			return userId, false
+		},
+		Authorizator: func(userId string, c *gin.Context) bool {
+			if userId == "admin" {
+				return true
+			}
+
+			return false
+		},
+		Unauthorized: func(c *gin.Context, code int, message string) {
+			c.JSON(code, gin.H{
+				"code":    code,
+				"message": message,
+			})
+		},
+		TokenLookup:   "header:Authorization",
+		TokenHeadName: "Eorder",
+		TimeFunc:      time.Now,
 	}
 
-	ctx := context.Background()
+	router.POST("/login", authMiddleware.LoginHandler)
 
-	// Check if database is alive.
-	err = db.PingContext(ctx)
-	if err != nil {
-		log.Fatal("Error pinging database: " + err.Error())
+	auth := router.Group("/")
+	auth.Use(authMiddleware.MiddlewareFunc())
+	{
+		auth.GET("/hello", helloHandler)
+		auth.GET("/refresh_token", authMiddleware.RefreshHandler)
 	}
-	return db
+	return auth
+}
+
+func addHandlers(auth *gin.RouterGroup) {
+
+	auth.GET("/user/:name", func(c *gin.Context) {
+		name := c.Param("name")
+		c.String(http.StatusOK, "Hello %s", name)
+	})
+
+	auth.GET("/user/:name/*action", func(c *gin.Context) {
+		name := c.Param("name")
+		action := c.Param("action")
+		message := name + " is " + action
+		c.String(http.StatusOK, message)
+	})
 
 }
 
-func getArticleById(id string) string {
-
-	rows, err := db.Query("select * from articles where id='1'")
-	if err != nil  {
-		log.Fatal("error retrieving columns for id :",id)
-	}
-	defer rows.Close()
-	var idd int
-	var article string
-	rows.Next()
-	err = rows.Scan(&idd, &article)
-	if err != nil {
-		log.Fatal("Scan failed:", err.Error())
-	}
-
-	return article
+func helloHandler(c *gin.Context) {
+	claims := jwt.ExtractClaims(c)
+	c.JSON(200, gin.H{
+		"userID": claims["id"],
+		"text":   "Hello World.",
+	})
 }
